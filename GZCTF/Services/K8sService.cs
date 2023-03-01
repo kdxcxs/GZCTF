@@ -3,9 +3,11 @@ using System.Text;
 using CTFServer.Models.Internal;
 using CTFServer.Services.Interface;
 using CTFServer.Utils;
+using IdentityModel.Client;
 using k8s;
 using k8s.Autorest;
 using k8s.Models;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 
 namespace CTFServer.Services;
@@ -20,15 +22,18 @@ public class K8sService : IContainerService
     private readonly string hostIP;
     private readonly string publicEntry;
     private readonly string? AuthSecretName;
+    private readonly IStringLocalizer<ServiceResource> loc;
 
-    public K8sService(IOptions<RegistryConfig> _registry, IOptions<ContainerProvider> _provider, ILogger<K8sService> _logger)
+    public K8sService(IOptions<RegistryConfig> _registry, IOptions<ContainerProvider> _provider,
+        IStringLocalizer<ServiceResource> _loc, ILogger<K8sService> _logger)
     {
+        loc = _loc;
         logger = _logger;
         publicEntry = _provider.Value.PublicEntry;
 
         if (!File.Exists("k8sconfig.yaml"))
         {
-            LogHelper.SystemLog(logger, "无法加载 K8s 配置文件，请确保挂载 /app/k8sconfig.yaml");
+            LogHelper.SystemLog(logger, loc["Unable to load K8s config file, please ensure that /app/k8sconfig.yaml is mounted"]);
             throw new FileNotFoundException("k8sconfig.yaml");
         }
 
@@ -51,7 +56,7 @@ public class K8sService : IContainerService
 
         InitK8s(withAuth, registry);
 
-        logger.SystemLog($"K8s 服务已启动 ({config.Host})", TaskStatus.Success, LogLevel.Debug);
+        logger.SystemLog($"{loc["K8s service started"]} ({config.Host})", TaskStatus.Success, LogLevel.Debug);
     }
 
     public async Task<Container?> CreateContainerAsync(ContainerConfig config, CancellationToken token = default)
@@ -123,19 +128,20 @@ public class K8sService : IContainerService
         }
         catch (HttpOperationException e)
         {
-            logger.SystemLog($"容器 {name} 创建失败, 状态：{e.Response.StatusCode.ToString()}", TaskStatus.Fail, LogLevel.Warning);
-            logger.SystemLog($"容器 {name} 创建失败, 响应：{e.Response.Content}", TaskStatus.Fail, LogLevel.Error);
+            logger.SystemLog($"{loc["Container"]} {name} {loc["creation failed"]}, {loc["status"]}：{e.Response.StatusCode.ToString()}", TaskStatus.Fail, LogLevel.Warning);
+            logger.SystemLog($"{loc["Container"]} {name} {loc["creation failed"]}, {loc["response"]}：{e.Response.Content}", TaskStatus.Fail, LogLevel.Error);
             return null;
         }
         catch (Exception e)
         {
-            logger.LogError(e, "创建容器失败");
+            logger.LogError(e, $"{loc["Container"]} {name} {loc["deletion failed"]}");
             return null;
         }
 
         if (pod is null)
         {
-            logger.SystemLog($"创建容器实例 {config.Image.Split("/").LastOrDefault()} 失败", TaskStatus.Fail, LogLevel.Warning);
+            logger.SystemLog(string.Format(loc["Failed to start container instance {0}"],
+                $"{name} ({config.Image.Split("/").LastOrDefault()})"), TaskStatus.Fail, LogLevel.Warning);
             return null;
         }
 
@@ -175,7 +181,7 @@ public class K8sService : IContainerService
         }
         catch (Exception e)
         {
-            logger.LogError(e, "创建服务失败");
+            logger.LogError(e, loc["Failed to create service"]);
             return null;
         }
 
@@ -201,12 +207,12 @@ public class K8sService : IContainerService
                 container.Status = ContainerStatus.Destroyed;
                 return;
             }
-            logger.SystemLog($"容器 {container.ContainerId} 删除失败, 状态：{e.Response.StatusCode.ToString()}", TaskStatus.Fail, LogLevel.Warning);
-            logger.SystemLog($"容器 {container.ContainerId} 删除失败, 响应：{e.Response.Content}", TaskStatus.Fail, LogLevel.Error);
+            logger.SystemLog($"{loc["Container"]} {container.ContainerId} {loc["deletion failed"]}, {loc["status"]}：{e.Response.StatusCode.ToString()}", TaskStatus.Fail, LogLevel.Warning);
+            logger.SystemLog($"{loc["Container"]} {container.ContainerId} {loc["deletion failed"]}, {loc["response"]}：{e.Response.Content}", TaskStatus.Fail, LogLevel.Error);
         }
         catch (Exception e)
         {
-            logger.LogError(e, "删除容器失败");
+            logger.LogError(e, $"{loc["Container"]} {container.ContainerId} {loc["deletion failed"]}");
             return;
         }
 

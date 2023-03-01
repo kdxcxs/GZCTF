@@ -2,6 +2,7 @@ global using CTFServer.Models;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using CTFServer;
 using CTFServer.Extensions;
 using CTFServer.Hubs;
 using CTFServer.Middlewares;
@@ -16,6 +17,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Localization;
 using NJsonSchema.Generation;
 using Serilog;
 
@@ -54,7 +57,7 @@ if (IsTesting || (builder.Environment.IsDevelopment() && !builder.Configuration.
 else
 {
     if (!builder.Configuration.GetSection("ConnectionStrings").GetSection("Database").Exists())
-        ExitWithFatalMessage("未找到数据库连接字符串字段 ConnectionStrings，请检查 appsettings.json 是否正常挂载及配置");
+        ExitWithFatalMessage("Database connection string field ConnectionStrings not found, please check if appsettings.json is mounted and correctly configured.");
 
     builder.Services.AddDbContext<AppDbContext>(
         options =>
@@ -87,8 +90,8 @@ if (!IsTesting)
     catch
     {
         if (builder.Configuration.GetSection("ConnectionStrings").GetSection("Database").Exists())
-            Log.Logger.Error($"当前连接字符串：{builder.Configuration.GetConnectionString("Database")}");
-        ExitWithFatalMessage("数据库连接失败，请检查 Database 连接字符串配置");
+            Log.Logger.Error($"Current connection string: {builder.Configuration.GetConnectionString("Database")}");
+        ExitWithFatalMessage("Database connection failed, please check the database connection string.");
     }
 }
 #endregion Configuration
@@ -100,7 +103,7 @@ builder.Services.AddOpenApiDocument(settings =>
     settings.DocumentName = "v1";
     settings.Version = "v1";
     settings.Title = "GZCTF Server API";
-    settings.Description = "GZCTF Server 接口文档";
+    settings.Description = "GZCTF Server API Documentation";
     settings.UseControllerSummaryAsTagDescription = true;
     settings.SerializerSettings = SystemTextJsonUtilities.ConvertJsonOptionsToNewtonsoftSettings(new JsonSerializerOptions
     {
@@ -174,6 +177,8 @@ builder.Services.Configure<DataProtectionTokenProviderOptions>(o =>
 
 #region Services and Repositories
 
+builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
+
 builder.Services.AddTransient<IMailSender, MailSender>()
     .Configure<EmailConfig>(builder.Configuration.GetSection(nameof(EmailConfig)));
 
@@ -225,17 +230,23 @@ builder.Services.AddResponseCompression(options =>
     );
 });
 
-builder.Services.AddControllersWithViews().ConfigureApiBehaviorOptions(options =>
-{
-    options.InvalidModelStateResponseFactory = context =>
+builder.Services.AddControllersWithViews()
+    .AddDataAnnotationsLocalization(options =>
     {
-        var errmsg = context.ModelState.Values.FirstOrDefault()?.Errors.FirstOrDefault()?.ErrorMessage;
-        return new JsonResult(new RequestResponse(errmsg ?? "验证失败，请检查输入。"))
+        options.DataAnnotationLocalizerProvider = (type, factory) =>
+            factory.Create(typeof(ModelResource));
+    })
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
         {
-            StatusCode = 400
+            var errmsg = context.ModelState.Values.FirstOrDefault()?.Errors.FirstOrDefault()?.ErrorMessage;
+            return new JsonResult(new RequestResponse(errmsg ?? InvalidModelMessage))
+            {
+                StatusCode = 400
+            };
         };
-    };
-});
+    });
 
 var app = builder.Build();
 
@@ -280,6 +291,8 @@ app.MapFallbackToFile("index.html");
 
 await using var scope = app.Services.CreateAsyncScope();
 var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+var localizer = scope.ServiceProvider.GetRequiredService<IStringLocalizer<SharedResource>>();
+InvalidModelMessage = localizer["Validation failed, please check your input."];
 
 try
 {
@@ -289,18 +302,19 @@ try
 }
 catch (Exception exception)
 {
-    logger.LogError(exception, "因异常，应用程序意外终止");
+    logger.LogError(exception, localizer["Application terminated unexpectedly due to an unhandled exception."]);
     throw;
 }
 finally
 {
-    logger.SystemLog("服务器已退出", CTFServer.TaskStatus.Exit, LogLevel.Debug);
+    logger.SystemLog(localizer["Server has exited"], CTFServer.TaskStatus.Exit, LogLevel.Debug);
     Log.CloseAndFlush();
 }
 
 public partial class Program
 {
     public static bool IsTesting { get; set; } = false;
+    public static string InvalidModelMessage { get; private set; } = "Validation failed, please check your input.";
 
     public static void Banner()
     {

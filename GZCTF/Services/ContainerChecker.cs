@@ -1,6 +1,7 @@
 ﻿using CTFServer.Repositories.Interface;
 using CTFServer.Services.Interface;
 using CTFServer.Utils;
+using Microsoft.Extensions.Localization;
 
 namespace CTFServer.Services;
 
@@ -8,18 +9,22 @@ public class ContainerChecker : IHostedService, IDisposable
 {
     private readonly ILogger<ContainerChecker> logger;
     private readonly IServiceScopeFactory serviceProvider;
+    private readonly IStringLocalizer<ServiceResource> localizer;
     private Timer? timer;
 
-    public ContainerChecker(IServiceScopeFactory provider, ILogger<ContainerChecker> logger)
+    public ContainerChecker(IServiceScopeFactory provider,
+        IStringLocalizer<ServiceResource> _localizer,
+        ILogger<ContainerChecker> logger)
     {
         serviceProvider = provider;
+        localizer = _localizer;
         this.logger = logger;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
         timer = new Timer(Execute, null, TimeSpan.Zero, TimeSpan.FromMinutes(3));
-        logger.SystemLog("容器生命周期检查已启动", TaskStatus.Success, LogLevel.Debug);
+        logger.SystemLog(localizer["Container lifecycle check started"], TaskStatus.Success, LogLevel.Debug);
         return Task.CompletedTask;
     }
 
@@ -34,14 +39,14 @@ public class ContainerChecker : IHostedService, IDisposable
         {
             await containerService.DestroyContainerAsync(container);
             await containerRepo.RemoveContainer(container);
-            logger.SystemLog($"移除到期容器 [{container.ContainerId}]");
+            logger.SystemLog($"{localizer["Removed expired container"]} [{container.ContainerId}]");
         }
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
         timer?.Change(Timeout.Infinite, 0);
-        logger.SystemLog("容器生命周期检查已停止", TaskStatus.Exit, LogLevel.Debug);
+        logger.SystemLog(localizer["Container lifecycle check stopped"], TaskStatus.Exit, LogLevel.Debug);
         return Task.CompletedTask;
     }
 

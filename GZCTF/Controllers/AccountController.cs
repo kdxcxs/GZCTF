@@ -9,12 +9,15 @@ using CTFServer.Utils;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 
 namespace CTFServer.Controllers;
 
-/// <summary>
+/// <summary> User account-related interfaces
+/// <para>
 /// 用户账户相关接口
+/// </para>
 /// </summary>
 [ApiController]
 [Route("api/[controller]/[action]")]
@@ -29,17 +32,20 @@ public class AccountController : ControllerBase
     private readonly IRecaptchaExtension recaptcha;
     private readonly IHostEnvironment environment;
     private readonly IOptionsSnapshot<AccountPolicy> accountPolicy;
+    private readonly IStringLocalizer<AccountController> localizer;
 
     public AccountController(
         IMailSender _mailSender,
         IFileRepository _FileService,
         IHostEnvironment _environment,
         IRecaptchaExtension _recaptcha,
+        IStringLocalizer<AccountController> _localizer,
         IOptionsSnapshot<AccountPolicy> _accountPolicy,
         UserManager<UserInfo> _userManager,
         SignInManager<UserInfo> _signInManager,
         ILogger<AccountController> _logger)
     {
+        localizer = _localizer;
         recaptcha = _recaptcha;
         mailSender = _mailSender;
         environment = _environment;
@@ -51,14 +57,20 @@ public class AccountController : ControllerBase
     }
 
     /// <summary>
+    /// User registration interface
+    /// <para>
     /// 用户注册接口
+    /// </para>
     /// </summary>
     /// <remarks>
+    /// Registers new user，Dev environment does not verify GToken，Mail-URL：/verify
+    /// <para>
     /// 使用此接口注册新用户，Dev环境下不校验 GToken，邮件URL：/verify
+    /// </para>
     /// </remarks>
     /// <param name="model"></param>
-    /// <response code="200">注册成功</response>
-    /// <response code="400">校验失败或用户已存在</response>
+    /// <response code="200">注册成功 / Registration succeeded</response>
+    /// <response code="400">校验失败或用户已存在 / Verification failed or user already exists</response>
     [HttpPost]
     [EnableRateLimiting(nameof(RateLimiter.LimitPolicy.Register))]
     [ProducesResponseType(typeof(RequestResponse<RegisterStatus>), StatusCodes.Status200OK)]
@@ -66,18 +78,18 @@ public class AccountController : ControllerBase
     public async Task<IActionResult> Register([FromBody] RegisterModel model)
     {
         if (!accountPolicy.Value.AllowRegister)
-            return BadRequest(new RequestResponse("注册功能已禁用"));
+            return BadRequest(new RequestResponse(localizer["Registration is disabled"]));
 
         if (accountPolicy.Value.UseGoogleRecaptcha && (
                 model.GToken is null || HttpContext.Connection.RemoteIpAddress is null ||
                 !await recaptcha.VerifyAsync(model.GToken, HttpContext.Connection.RemoteIpAddress.ToString())
             ))
-            return BadRequest(new RequestResponse("Google reCAPTCHA 校验失败"));
+            return BadRequest(new RequestResponse(localizer["Google reCAPTCHA verification failed"]));
 
         var mailDomain = model.Email!.Split('@')[1];
         if (!string.IsNullOrWhiteSpace(accountPolicy.Value.EmailDomainList) &&
             accountPolicy.Value.EmailDomainList.Split(',').All(d => d != mailDomain))
-            return BadRequest(new RequestResponse($"可用邮箱后缀：{accountPolicy.Value.EmailDomainList}"));
+            return BadRequest(new RequestResponse($"{localizer["Valid Email TLDs"]}: {accountPolicy.Value.EmailDomainList}"));
 
         var user = new UserInfo
         {
@@ -95,10 +107,10 @@ public class AccountController : ControllerBase
             var current = await userManager.FindByEmailAsync(model.Email);
 
             if (current is null)
-                return BadRequest(new RequestResponse(result.Errors.FirstOrDefault()?.Description ?? "未知错误"));
+                return BadRequest(new RequestResponse(result.Errors.FirstOrDefault()?.Description ?? localizer["Unknown error"]));
 
             if (await userManager.IsEmailConfirmedAsync(current))
-                return BadRequest(new RequestResponse("此账户已存在"));
+                return BadRequest(new RequestResponse(localizer["Account already exists"]));
 
             user = current;
         }
@@ -109,18 +121,18 @@ public class AccountController : ControllerBase
             await userManager.UpdateAsync(user);
             await signInManager.SignInAsync(user, true);
 
-            logger.Log("用户成功注册", user, TaskStatus.Success);
-            return Ok(new RequestResponse<RegisterStatus>("注册成功", RegisterStatus.LoggedIn, 200));
+            logger.Log(localizer["Successfully registered"], user, TaskStatus.Success);
+            return Ok(new RequestResponse<RegisterStatus>(localizer["Successfully registered"], RegisterStatus.LoggedIn, 200));
         }
 
         if (!accountPolicy.Value.EmailConfirmationRequired)
         {
-            logger.Log("用户成功注册，待审核", user, TaskStatus.Success);
-            return Ok(new RequestResponse<RegisterStatus>("注册成功，等待管理员审核",
+            logger.Log(localizer["Successfully registered, pending administrator confirmation"], user, TaskStatus.Success);
+            return Ok(new RequestResponse<RegisterStatus>(localizer["Successfully registered, pending administrator confirmation"],
                     RegisterStatus.AdminConfirmationRequired, 200));
         }
 
-        logger.Log("发送用户邮箱验证邮件", user, TaskStatus.Pending);
+        logger.Log(localizer["Sending user verification email"], user, TaskStatus.Pending);
 
         var token = Codec.Base64.Encode(await userManager.GenerateEmailConfirmationTokenAsync(user));
         if (environment.IsDevelopment())
@@ -131,23 +143,29 @@ public class AccountController : ControllerBase
         {
             if (!mailSender.SendConfirmEmailUrl(user.UserName, user.Email,
                 $"https://{HttpContext.Request.Host}/account/verify?token={token}&email={Codec.Base64.Encode(model.Email)}"))
-                return BadRequest(new RequestResponse("邮件无法发送，请联系管理员"));
+                return BadRequest(new RequestResponse(localizer["Mail cannot be sent, please contact the administrator"]));
         }
 
-        return Ok(new RequestResponse<RegisterStatus>("注册成功，等待邮箱验证",
+        return Ok(new RequestResponse<RegisterStatus>(localizer["Successful registration, pending email verification"],
                     RegisterStatus.EmailConfirmationRequired, 200));
     }
 
     /// <summary>
+    /// User password recovery request interface
+    /// <para>
     /// 用户找回密码请求接口
+    /// </para>
     /// </summary>
     /// <remarks>
+    /// Requests password recovery, sending recovery email to user, Mail-URL：/reset
+    /// <para>
     /// 使用此接口请求找回密码，向用户邮箱发送邮件，邮件URL：/reset
+    /// </para>
     /// </remarks>
     /// <param name="model"></param>
-    /// <response code="200">用户密码重置邮件发送成功</response>
-    /// <response code="400">校验失败</response>
-    /// <response code="404">用户不存在</response>
+    /// <response code="200">用户密码重置邮件发送成功 / User password reset email sent</response>
+    /// <response code="400">校验失败 / Verification failed</response>
+    /// <response code="404">用户不存在 / User does not exist</response>
     [HttpPost]
     [EnableRateLimiting(nameof(RateLimiter.LimitPolicy.Register))]
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status200OK)]
@@ -159,19 +177,19 @@ public class AccountController : ControllerBase
                 model.GToken is null || HttpContext.Connection.RemoteIpAddress is null ||
                 !await recaptcha.VerifyAsync(model.GToken, HttpContext.Connection.RemoteIpAddress.ToString())
             ))
-            return BadRequest(new RequestResponse("Google reCAPTCHA 校验失败"));
+            return BadRequest(new RequestResponse(localizer["Google reCAPTCHA verification failed"]));
 
         var user = await userManager.FindByEmailAsync(model.Email!);
         if (user is null)
-            return NotFound(new RequestResponse("用户不存在", 404));
+            return NotFound(new RequestResponse(localizer["User does not exist"], 404));
 
         if (!user.EmailConfirmed)
-            return NotFound(new RequestResponse("账户未激活，请重新注册", 404));
+            return NotFound(new RequestResponse(localizer["Account not active, please re-register"], 404));
 
         if (!accountPolicy.Value.EmailConfirmationRequired)
-            return BadRequest(new RequestResponse("请联系管理员重置密码"));
+            return BadRequest(new RequestResponse(localizer["Please contact the administrator to reset your password"]));
 
-        logger.Log("发送用户密码重置邮件", HttpContext, TaskStatus.Pending);
+        logger.Log(localizer["Sending user password reset email"], HttpContext, TaskStatus.Pending);
 
         var token = Codec.Base64.Encode(await userManager.GeneratePasswordResetTokenAsync(user));
 
@@ -183,10 +201,10 @@ public class AccountController : ControllerBase
         {
             if (!mailSender.SendResetPasswordUrl(user.UserName, user.Email,
                 $"https://{HttpContext.Request.Host}/account/reset?token={token}&email={Codec.Base64.Encode(model.Email)}"))
-                return BadRequest(new RequestResponse("邮件无法发送，请联系管理员"));
+                return BadRequest(new RequestResponse(localizer["Mail cannot be sent, please contact the administrator"]));
         }
 
-        return Ok(new RequestResponse("邮件发送成功", 200));
+        return Ok(new RequestResponse(localizer["Email sent successfully"], 200));
     }
 
     /// <summary>

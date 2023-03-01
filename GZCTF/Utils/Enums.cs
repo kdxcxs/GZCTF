@@ -391,3 +391,8 @@ public static class AnswerResultExtensions
             _ => "??"
         };
 }
+
+// Dummy classes to get resources
+public class ModelResource { }
+public class SharedResource { }
+public class ServiceResource { }

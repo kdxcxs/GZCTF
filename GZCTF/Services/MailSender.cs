@@ -3,6 +3,7 @@ using CTFServer.Models.Internal;
 using CTFServer.Services.Interface;
 using CTFServer.Utils;
 using MailKit.Net.Smtp;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using MimeKit;
 
@@ -12,9 +13,12 @@ public class MailSender : IMailSender
 {
     private readonly EmailConfig? options;
     private readonly ILogger<MailSender> logger;
+    private readonly IStringLocalizer<ServiceResource> loc;
 
-    public MailSender(IOptions<EmailConfig> options, ILogger<MailSender> logger)
+    public MailSender(IOptions<EmailConfig> options, ILogger<MailSender> logger,
+        IStringLocalizer<ServiceResource> _loc)
     {
+        loc = _loc;
         this.options = options.Value;
         this.logger = logger;
     }
@@ -42,12 +46,12 @@ public class MailSender : IMailSender
             await client.SendAsync(msg);
             await client.DisconnectAsync(true);
 
-            logger.SystemLog("发送邮件：" + to, TaskStatus.Success, LogLevel.Information);
+            logger.SystemLog(loc["Sent email to: "] + to, TaskStatus.Success, LogLevel.Information);
             return true;
         }
         catch (Exception e)
         {
-            logger.LogError(e, "邮件发送遇到问题");
+            logger.LogError(e, loc["Error occurred while sending email"]);
             return false;
         }
     }
@@ -56,7 +60,7 @@ public class MailSender : IMailSender
     {
         if (email is null || userName is null || title is null)
         {
-            logger.SystemLog("无效的邮件发送调用！", TaskStatus.Fail);
+            logger.SystemLog(loc["Bad email sending call!"], TaskStatus.Fail);
             return;
         }
 
@@ -75,7 +79,7 @@ public class MailSender : IMailSender
             .Replace("{url}", url)
             .Replace("{nowtime}", DateTimeOffset.UtcNow.ToString("u"));
         if (!await SendEmailAsync(title, emailContent, email))
-            logger.SystemLog("邮件发送失败！", TaskStatus.Fail);
+            logger.SystemLog(loc["Failed to send email!"], TaskStatus.Fail);
     }
 
     private bool SendUrlIfPossible(string? title, string? information, string? btnmsg, string? userName, string? email, string? url)
@@ -88,17 +92,21 @@ public class MailSender : IMailSender
     }
 
     public bool SendConfirmEmailUrl(string? userName, string? email, string? confirmLink)
-        => SendUrlIfPossible("验证邮箱",
-            $"你正在进行账户注册操作，我们需要验证你的注册邮箱：{email}，请点击下方按钮进行验证。",
-            "确认验证邮箱", userName, email, confirmLink);
+        => SendUrlIfPossible(loc["Confirm your email"],
+            string.Format(loc["You are in the process of account registration operation, " +
+                "we need to verify your registered email: {0}, " +
+                "please click the button below to verify."], email),
+            loc["Confirm"], userName, email, confirmLink);
 
     public bool SendChangeEmailUrl(string? userName, string? email, string? resetLink)
-        => SendUrlIfPossible("更改邮箱",
-            "你正在进行账户邮箱更换操作，请点击下方按钮验证你的新邮箱。",
-            "确认跟换邮箱", userName, email, resetLink);
+        => SendUrlIfPossible(loc["Change your email"],
+            loc["You are in the process of changing your account email address, " +
+                "please click the button below to verify your new email address."],
+            $"{loc["Confirm"]} {loc["Change your email"].ToString().ToLower()}", userName, email, resetLink);
 
     public bool SendResetPasswordUrl(string? userName, string? email, string? resetLink)
-        => SendUrlIfPossible("重置密码",
-            "你正在进行账户密码重置操作，请点击下方按钮重置你的密码。",
-            "确认重置密码", userName, email, resetLink);
+        => SendUrlIfPossible(loc["Reset your password"],
+            loc["You are in the process of resetting your account password, " +
+                "please click the button below to reset your password."],
+            $"{loc["Confirm"]} {loc["Reset your password"].ToString().ToLower()}", userName, email, resetLink);
 }

@@ -1,9 +1,18 @@
 ﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Localization;
 
 namespace CTFServer.Utils;
 
 public class TranslatedIdentityErrorDescriber : IdentityErrorDescriber
 {
+    private readonly IStringLocalizer<SharedResource> localizer;
+
+    public TranslatedIdentityErrorDescriber(IStringLocalizer<SharedResource> _localizer)
+    {
+        localizer = _localizer;
+    }
+
+
     public override IdentityError ConcurrencyFailure()
     {
         return new IdentityError

@@ -1,8 +1,10 @@
 ﻿using System.ComponentModel;
+using CTFServer.Controllers;
 using CTFServer.Models.Data;
 using CTFServer.Services.Interface;
 using CTFServer.Utils;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace CTFServer.Services;
 
@@ -11,13 +13,16 @@ public class ConfigService : IConfigService
     private readonly ILogger<ConfigService> logger;
     private readonly IConfigurationRoot? configuration;
     private readonly AppDbContext context;
+    private readonly IStringLocalizer<ServiceResource> localizer;
 
     public ConfigService(AppDbContext _context,
         ILogger<ConfigService> _logger,
+        IStringLocalizer<ServiceResource> _localizer,
         IConfiguration _configuration)
     {
         context = _context;
         logger = _logger;
+        localizer = _localizer;
         configuration = _configuration as IConfigurationRoot;
     }
 
@@ -27,7 +32,7 @@ public class ConfigService : IConfigService
             return;
 
         if (type.IsArray || IsArrayLikeInterface(type))
-            throw new InvalidOperationException("不支持的配置项类型");
+            throw new InvalidOperationException("Unsupported config item type");
 
         TypeConverter converter = TypeDescriptor.GetConverter(type);
         if (type == typeof(string) || type.IsValueType)
@@ -78,12 +83,12 @@ public class ConfigService : IConfigService
                 if (dbConf.Value != conf.Value)
                 {
                     dbConf.Value = conf.Value;
-                    logger.SystemLog($"更新全局设置：{conf.ConfigKey} => {conf.Value}", TaskStatus.Success, LogLevel.Debug);
+                    logger.SystemLog($"{localizer["Updated global config"]}: {conf.ConfigKey} => {conf.Value}", TaskStatus.Success, LogLevel.Debug);
                 }
             }
             else
             {
-                logger.SystemLog($"添加全局设置：{conf.ConfigKey} => {conf.Value}", TaskStatus.Success, LogLevel.Debug);
+                logger.SystemLog($"{localizer["Added global config"]}：{conf.ConfigKey} => {conf.Value}", TaskStatus.Success, LogLevel.Debug);
                 await context.Configs.AddAsync(conf, token);
             }
         }
